@@ -19,6 +19,7 @@ import {
 } from "./chartData";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import { usePreferences } from "@/hooks/usePreferences";
+import { isLostPingSample, isValidPingLatency } from "@/utils/pingValues";
 import type { PingRecord } from "@/types/komari";
 import type { TimedMetricPoint } from "./chartData";
 
@@ -154,7 +155,7 @@ export function PingChart({
         anchors.push(anchor);
       }
       const current = pointMap.get(anchor) ?? { time: anchor };
-      current[String(record.task_id)] = record.value > 0 ? record.value : null;
+      current[String(record.task_id)] = isValidPingLatency(record.value) ? record.value : null;
       pointMap.set(anchor, current);
     }
 
@@ -191,7 +192,7 @@ export function PingChart({
           ? ((chart[index + 1] as Array<number | null | undefined>) ?? [])
           : [],
       )
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
     if (values.length === 0) return [0, 100];
     const min = Math.min(...values);
     const max = Math.max(...values);
@@ -203,10 +204,17 @@ export function PingChart({
     return [Math.max(0, min - pad), max + pad];
   }, [chart, tasks, visibleTaskIds]);
 
+  const xRange = useMemo<[number, number] | null>(() => {
+    const from = data?.from != null ? toChartSeconds(data.from) : 0;
+    const to = data?.to != null ? toChartSeconds(data.to) : 0;
+    return from > 0 && to > from ? [from, to] : null;
+  }, [data?.from, data?.to]);
+
   const options = useMemo<uPlot.Options | null>(() => {
     if (!chart) return null;
     const grid = isDark ? "rgba(255,255,255,0.065)" : "rgba(0,0,0,0.08)";
     const text = isDark ? "#a5a5aa" : "#52525b";
+    const xScale = xRange ? { time: true, range: xRange } : { time: true };
     return {
       width: w,
       height: h,
@@ -214,7 +222,7 @@ export function PingChart({
       cursor: { drag: { x: true, y: false } },
       legend: { show: false },
       scales: {
-        x: { time: true },
+        x: xScale,
         y: { auto: false, range: yRange },
       },
       axes: [
@@ -290,13 +298,13 @@ export function PingChart({
               left: position.left,
               top: position.top,
               rows,
-              time: formatTooltipTime(timestamp),
+              time: formatTooltipTime(timestamp, hours),
             });
           },
         ],
       },
     };
-  }, [chart, connectNulls, h, hiddenTasks, isDark, taskColors, taskIndexById, taskLabels, tasks, visibleTasks, w, yRange]);
+  }, [chart, connectNulls, h, hiddenTasks, hours, isDark, taskColors, taskIndexById, taskLabels, tasks, visibleTasks, w, xRange, yRange]);
 
   const taskStats = useMemo(() => {
     const grouped = new Map<number, PingRecord[]>();
@@ -313,9 +321,9 @@ export function PingChart({
     return tasks.map((task, index) => {
       const records = grouped.get(task.id) ?? [];
       const positives = records
-        .filter((record) => record.value > 0)
+        .filter((record) => isValidPingLatency(record.value))
         .map((record) => record.value);
-      const latest = [...records].reverse().find((record) => record.value > 0)?.value ?? null;
+      const latest = [...records].reverse().find((record) => isValidPingLatency(record.value))?.value ?? null;
       const avg = positives.length
         ? positives.reduce((sum, value) => sum + value, 0) / positives.length
         : null;
@@ -325,7 +333,7 @@ export function PingChart({
       const p99 = percentile(positives, 0.99);
       const volatility = p50 && p50 > 0 && p99 ? p99 / p50 : null;
       const total = records.length;
-      const lost = records.filter((record) => record.value <= 0).length;
+      const lost = records.filter((record) => isLostPingSample(record.value)).length;
       const loss = total > 0 ? (lost / total) * 100 : task.loss;
       return {
         ...task,

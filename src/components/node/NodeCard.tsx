@@ -299,7 +299,6 @@ export const NodeCard = memo(function NodeCard({
                 {hasHomepagePingBinding ? (
                   <MiniBars
                     values={ping.values}
-                    max={ping.max}
                     lastValue={ping.lastValue ?? undefined}
                     buckets={pingBuckets}
                     redrawKey={resolvedAppearance}

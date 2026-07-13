@@ -7,7 +7,7 @@ function toHsl(h: number, s: number, l: number) {
 }
 
 export function latencyHeatColor(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms <= 0) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) {
     return "var(--text-tertiary)";
   }
 

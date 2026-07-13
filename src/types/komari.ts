@@ -200,8 +200,9 @@ export const PublicConfigSchema = z
     oauth_enable: z.boolean().default(false),
     private_site: z.boolean().default(false),
     record_enabled: z.boolean().default(true),
-    record_preserve_time: z.number().default(0),
-    ping_record_preserve_time: z.number().default(0),
+    record_preserve_time: looseNumber.default(0),
+    ping_record_preserve_time: looseNumber.default(0),
+    metric_retention_days: looseNumber.default(0),
     custom_head: z.string().default(""),
     custom_body: z.string().default(""),
     theme_settings: z.record(z.string(), z.unknown()).default({}),
@@ -219,6 +220,7 @@ export interface PublicConfig {
   record_enabled: boolean;
   record_preserve_time: number;
   ping_record_preserve_time: number;
+  metric_retention_days: number;
   custom_head: string;
   custom_body: string;
   theme_settings: ThemeSettings & Record<string, unknown>;
@@ -363,6 +365,8 @@ export interface PingRecordsResponse {
   count: number;
   records: PingRecord[];
   tasks: PingTask[];
+  from?: string | number;
+  to?: string | number;
 }
 
 export const PingBasicInfoSchema = z

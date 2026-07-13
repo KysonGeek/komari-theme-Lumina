@@ -8,8 +8,16 @@ import {
   buildLoadTimeRangeOptions,
 } from "@/components/instance/chartShared";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
+import type { PublicConfig } from "@/types/komari";
 
 const FIXED_PING_HOURS = 24;
+
+function getMetricRetentionHours(config: PublicConfig | undefined) {
+  const legacyHours = config?.record_preserve_time ?? 0;
+  if (legacyHours > 0) return legacyHours;
+  const metricRetentionDays = config?.metric_retention_days ?? 0;
+  return metricRetentionDays > 0 ? metricRetentionDays * 24 : 0;
+}
 
 export function Instance() {
   const { uuid } = useParams<{ uuid: string }>();
@@ -19,8 +27,8 @@ export function Instance() {
   const chartControlsRef = useRef<HTMLDivElement | null>(null);
 
   const loadRanges = useMemo(
-    () => buildLoadTimeRangeOptions(config?.record_preserve_time),
-    [config?.record_preserve_time],
+    () => buildLoadTimeRangeOptions(getMetricRetentionHours(config)),
+    [config],
   );
   const showPingChart = config?.theme_settings?.showPingChart !== false;
 

@@ -34,6 +34,37 @@ const RpcRecordsSchema = z
     records: z.unknown().optional(),
     tasks: z.unknown().optional(),
     basic_info: z.unknown().optional(),
+    from: z.union([z.string(), z.number()]).optional(),
+    to: z.union([z.string(), z.number()]).optional(),
+  })
+  .passthrough();
+
+const PublicMetricPointSchema = z
+  .object({
+    time: z.union([z.string(), z.number()]),
+    value: z.number().nullable().optional(),
+    count: z.number().default(0),
+    tag: z.record(z.string(), z.string()).optional(),
+    tags: z.record(z.string(), z.string()).optional(),
+  })
+  .passthrough();
+
+const PublicMetricSeriesSchema = z
+  .object({
+    metric_key: z.string(),
+    entity_id: z.string().default(""),
+    tag: z.record(z.string(), z.string()).optional(),
+    tags: z.record(z.string(), z.string()).optional(),
+    points: z.array(PublicMetricPointSchema).default([]),
+  })
+  .passthrough();
+
+const PublicQueryMetricsSchema = z
+  .object({
+    start: z.union([z.string(), z.number()]).optional(),
+    end: z.union([z.string(), z.number()]).optional(),
+    series: z.array(PublicMetricSeriesSchema).default([]),
+    count: z.number().default(0),
   })
   .passthrough();
 
@@ -41,13 +72,20 @@ const LOAD_RECORDS_PER_HOUR = 12;
 const PING_RECORDS_PER_HOUR = 240;
 const MAX_RPC_RECORDS = 20_000;
 const OVERVIEW_PING_MAX_COUNT = 4_000;
+const PING_LATENCY_METRIC = "ping.latency_ms";
+const PING_LOSS_METRIC = "ping.loss";
 
 interface RpcRecordsPayload {
   count?: number;
   records?: unknown;
   tasks?: unknown;
   basic_info?: unknown;
+  from?: string | number;
+  to?: string | number;
 }
+
+type PublicMetricSeries = z.input<typeof PublicMetricSeriesSchema>;
+type PublicMetricPoint = z.input<typeof PublicMetricPointSchema>;
 
 export interface PingOverviewResponse {
   count: number;
@@ -88,11 +126,165 @@ function normalizeRpcLatestStatus(
   return {};
 }
 
+function normalizeNodeListPayload(payload: unknown): NodeInfo[] {
+  const arrayResult = z.array(NodeInfoSchema).safeParse(payload);
+  if (arrayResult.success) {
+    return arrayResult.data;
+  }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Schema mismatch on nodes: expected node array or uuid-keyed map");
+  }
+
+  return Object.entries(payload as Record<string, unknown>).map(([uuid, value]) =>
+    NodeInfoSchema.parse(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? { uuid, ...value }
+        : value,
+    ),
+  );
+}
+
 function getRecordsMaxCount(hours: number, recordsPerHour: number) {
   const safeHours = Number.isFinite(hours) && hours > 0 ? hours : 1;
   return Math.min(
     MAX_RPC_RECORDS,
     Math.max(recordsPerHour, Math.ceil(safeHours * recordsPerHour)),
+  );
+}
+
+function finiteMetricValue(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function metricPointTime(value: string | number) {
+  return value;
+}
+
+function getTaskIdFromTags(...items: Array<Record<string, string> | undefined>) {
+  for (const tags of items) {
+    const raw = tags?.task_id;
+    if (!raw) continue;
+    const taskId = Number(raw);
+    if (Number.isInteger(taskId) && taskId > 0) return taskId;
+  }
+  return null;
+}
+
+function getPointTags(series: PublicMetricSeries, point: PublicMetricPoint) {
+  return point.tags ?? point.tag ?? series.tags ?? series.tag;
+}
+
+function taskAppliesToClient(task: PingTask, uuid: string) {
+  if (!uuid) return true;
+  return task.clients.includes(uuid);
+}
+
+function filterPingTasks(
+  tasks: PingTask[],
+  records: PingRecordsResponse["records"],
+  uuid = "",
+) {
+  const recordTaskIds = new Set(records.map((record) => record.task_id));
+  const filtered = tasks.filter((task) =>
+    recordTaskIds.has(task.id) || taskAppliesToClient(task, uuid),
+  );
+  return filtered.length > 0 ? filtered : derivePingTasks(records);
+}
+
+function pingRecordsFromMetricSeries(series: PublicMetricSeries[]) {
+  type Entry = {
+    client: string;
+    taskId: number;
+    time: string | number;
+    latency?: number;
+    loss?: number;
+  };
+  const entries = new Map<string, Entry>();
+
+  for (const item of series) {
+    if (item.metric_key !== PING_LATENCY_METRIC && item.metric_key !== PING_LOSS_METRIC) {
+      continue;
+    }
+    if (!item.entity_id) continue;
+
+    for (const point of item.points ?? []) {
+      const value = finiteMetricValue(point.value);
+      if (value == null) continue;
+
+      const tags = getPointTags(item, point);
+      const taskId = getTaskIdFromTags(tags);
+      if (taskId == null) continue;
+
+      const time = metricPointTime(point.time);
+      const key = `${item.entity_id}\u0000${taskId}\u0000${String(time)}`;
+      const entry = entries.get(key) ?? {
+        client: item.entity_id,
+        taskId,
+        time,
+      };
+      if (item.metric_key === PING_LATENCY_METRIC) {
+        entry.latency = value;
+      } else {
+        entry.loss = value;
+      }
+      entries.set(key, entry);
+    }
+  }
+
+  const records: PingRecordsResponse["records"] = [];
+  for (const entry of entries.values()) {
+    let value: number | null = null;
+    if (entry.latency != null && entry.latency >= 0) {
+      value = entry.latency;
+    } else if ((entry.latency != null && entry.latency < 0) || (entry.loss != null && entry.loss > 0)) {
+      value = -1;
+    }
+    if (value == null) continue;
+
+    records.push({
+      task_id: entry.taskId,
+      time: entry.time,
+      value,
+      client: entry.client,
+    });
+  }
+
+  return records.sort((left, right) => {
+    const leftTime = Date.parse(String(left.time));
+    const rightTime = Date.parse(String(right.time));
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (left.client !== right.client) return left.client.localeCompare(right.client);
+    return left.task_id - right.task_id;
+  });
+}
+
+async function queryPingMetricSeries({
+  hours,
+  uuid,
+  taskId,
+  maxPoints,
+}: {
+  hours: number;
+  uuid?: string;
+  taskId?: number;
+  maxPoints: number;
+}) {
+  return await rpcCall(
+    "public:queryMetrics",
+    {
+      metric_keys: [PING_LATENCY_METRIC, PING_LOSS_METRIC],
+      hours,
+      max_points: maxPoints,
+      server_downsample: true,
+      fill_empty: false,
+      aggregation: "avg",
+      ...(uuid ? { entity_id: uuid } : {}),
+      ...(taskId ? { tags: { task_id: String(taskId) } } : {}),
+    },
+    PublicQueryMetricsSchema,
   );
 }
 
@@ -174,6 +366,8 @@ function normalizeRpcPingRecords(
     count: payload.count || records.length,
     records,
     tasks,
+    from: payload.from,
+    to: payload.to,
   };
 }
 
@@ -190,6 +384,54 @@ function normalizeRpcPingOverview(
     records,
     tasks: parsedTasks.success ? parsedTasks.data : derivePingTasks(records),
     basicInfo: basicInfo.success ? basicInfo.data : [],
+  };
+}
+
+async function getMetricPingRecords(
+  uuid: string,
+  hours: number,
+): Promise<PingRecordsResponse> {
+  const [tasks, metrics] = await Promise.all([
+    getPublicPingTasks(),
+    queryPingMetricSeries({
+      uuid,
+      hours,
+      maxPoints: getRecordsMaxCount(hours, PING_RECORDS_PER_HOUR),
+    }),
+  ]);
+  const records = pingRecordsFromMetricSeries(metrics.series ?? []);
+
+  return {
+    count: records.length,
+    records,
+    tasks: filterPingTasks(tasks, records, uuid),
+    from: metrics.start,
+    to: metrics.end,
+  };
+}
+
+async function getMetricPingOverview(
+  hours: number,
+  taskId?: number,
+): Promise<PingOverviewResponse> {
+  const [tasks, metrics] = await Promise.all([
+    getPublicPingTasks(),
+    queryPingMetricSeries({
+      hours,
+      taskId,
+      maxPoints: OVERVIEW_PING_MAX_COUNT,
+    }),
+  ]);
+  const records = pingRecordsFromMetricSeries(metrics.series ?? []);
+  const selectedTasks = taskId
+    ? tasks.filter((task) => task.id === taskId)
+    : filterPingTasks(tasks, records);
+
+  return {
+    count: records.length,
+    records,
+    tasks: selectedTasks.length > 0 ? selectedTasks : derivePingTasks(records),
+    basicInfo: [],
   };
 }
 
@@ -217,7 +459,12 @@ export async function getNodesLatestStatus(
 }
 
 export async function getNodes(): Promise<NodeInfo[]> {
-  return (await apiGet("/api/nodes", z.array(NodeInfoSchema))) as NodeInfo[];
+  try {
+    return normalizeNodeListPayload(await apiGet("/api/nodes", z.unknown()));
+  } catch {
+    const payload = await rpcCall("common:getNodes", {}, z.unknown());
+    return normalizeNodeListPayload(payload);
+  }
 }
 
 export async function getAdminClients(): Promise<AdminClient[]> {
@@ -256,6 +503,12 @@ export async function getPingRecords(
   uuid: string,
   hours = 6,
 ): Promise<PingRecordsResponse> {
+  try {
+    return await getMetricPingRecords(uuid, hours);
+  } catch {
+    // Older Komari builds do not expose public:queryMetrics; keep legacy records fallback.
+  }
+
   try {
     const maxCount = getRecordsMaxCount(hours, PING_RECORDS_PER_HOUR);
     const payload = await rpcCall(
@@ -321,6 +574,12 @@ export async function getPingOverview(
   hours = 1,
   taskId?: number,
 ): Promise<PingOverviewResponse> {
+  try {
+    return await getMetricPingOverview(hours, taskId);
+  } catch {
+    // Fall back to the legacy ping records API when metric series are unavailable.
+  }
+
   try {
     const payload = await rpcCall(
       "common:getRecords",

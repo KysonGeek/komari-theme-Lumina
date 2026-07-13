@@ -8,6 +8,7 @@ import {
   normalizeHomepagePingTaskBindings,
   type HomepagePingTaskBindings,
 } from "@/utils/pingTasks";
+import { isLostPingSample, isValidPingLatency } from "@/utils/pingValues";
 
 const DEFAULT_PING_REFRESH_INTERVAL = 60_000;
 const MIN_PING_REFRESH_INTERVAL = 10_000;
@@ -125,7 +126,7 @@ function buildPingOverviewItems(
 
     const stats = lossStatsByClient.get(record.client) ?? { total: 0, lost: 0 };
     stats.total += 1;
-    if (record.value <= 0) {
+    if (isLostPingSample(record.value)) {
       stats.lost += 1;
     }
     lossStatsByClient.set(record.client, stats);
@@ -136,7 +137,6 @@ function buildPingOverviewItems(
     const sorted = [...clientRecords].sort(
       (left, right) => toTimestamp(left.time) - toTimestamp(right.time),
     );
-    const latestRecord = sorted[sorted.length - 1];
     const values: number[] = new Array(sorted.length);
     const samples: Array<{ time: number; value: number }> = [];
     let max = 1;
@@ -149,16 +149,19 @@ function buildPingOverviewItems(
       if (time > 0) {
         samples.push({ time, value });
       }
-      if (value > max) {
+      if (isValidPingLatency(value) && value > max) {
         max = value;
       }
     }
 
     const lossStats = lossStatsByClient.get(client);
+    const latestValidRecord = [...sorted].reverse().find((record) =>
+      isValidPingLatency(record.value),
+    );
     result.set(client, {
       client,
       isAssigned: true,
-      lastValue: latestRecord && latestRecord.value > 0 ? latestRecord.value : null,
+      lastValue: latestValidRecord?.value ?? null,
       values,
       samples,
       max,
@@ -513,10 +516,10 @@ export function usePingMiniBuckets(
       if (bucketIndex >= resolvedCount) bucketIndex = resolvedCount - 1;
 
       totals[bucketIndex] += 1;
-      if (sample.value > 0) {
+      if (isValidPingLatency(sample.value)) {
         positiveSums[bucketIndex] += sample.value;
         positiveCounts[bucketIndex] += 1;
-      } else {
+      } else if (isLostPingSample(sample.value)) {
         losts[bucketIndex] += 1;
       }
     }
