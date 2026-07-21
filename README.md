@@ -2,7 +2,7 @@
 
 Lumina 是一个面向 [Komari](https://github.com/komari-monitor/komari) 的主题，首页强调流畅度与卡片化信息密度，详情页吸收了官方主题、Mochi 与 PurCarte 的一部分交互与展示思路。
 
-![Lumina Preview](./preview-readme.png)
+![Lumina Preview](./preview.png)
 
 ## 截图
 

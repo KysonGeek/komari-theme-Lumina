@@ -1,9 +1,7 @@
 import { Outlet } from "react-router-dom";
 import { FloatingControls } from "./FloatingControls";
-import { useAppearance } from "@/hooks/useAppearance";
 
 export function AppShell() {
-  useAppearance();
   return (
     <div className="relative flex min-h-screen flex-col">
       <FloatingControls />

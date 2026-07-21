@@ -141,11 +141,22 @@ export function PingChart({
       : detectTypicalIntervalMs(sortedRecords.map(({ time }) => time), 60);
     const tolerance = Math.min(6, Math.max(0.8, fallbackInterval * 0.25));
     const anchors: number[] = [];
+    // anchors 单调不减（记录已按时间升序、仅追加当前时刻），因此可用单调指针
+    // 把每次记录的首匹配扫描从 O(n) 降为摊还 O(1)，语义与原线性首匹配完全一致。
+    let anchorSearchStart = 0;
 
     for (const { record, time } of sortedRecords) {
       if (!taskKeySet.has(String(record.task_id))) continue;
       let anchor = time;
-      for (const existing of anchors) {
+      while (
+        anchorSearchStart < anchors.length &&
+        anchors[anchorSearchStart] < time - tolerance
+      ) {
+        anchorSearchStart += 1;
+      }
+      for (let index = anchorSearchStart; index < anchors.length; index += 1) {
+        const existing = anchors[index];
+        if (existing > time + tolerance) break;
         if (Math.abs(existing - time) <= tolerance) {
           anchor = existing;
           break;

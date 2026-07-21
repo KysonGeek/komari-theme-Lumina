@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   ensureStarted,
   getNodeSnapshot,
@@ -21,13 +21,21 @@ function useEnsured(enabled = true) {
   }, [enabled]);
 }
 
+const noopUnsubscribe = () => undefined;
+
 export function useNode(uuid: string, enabled = true): NodeDisplay | undefined {
   useEnsured(enabled);
-  return useSyncExternalStore(
-    enabled ? (cb) => subscribeToNode(uuid, cb) : () => () => undefined,
-    enabled ? () => getNodeSnapshot(uuid) : () => undefined,
-    enabled ? () => getNodeSnapshot(uuid) : () => undefined,
+  // subscribe 身份必须稳定：useSyncExternalStore 会在其变化时退订再订阅，
+  // 内联箭头会导致组件每次 render 都重订阅一次。
+  const subscribeFn = useCallback(
+    (cb: () => void) => (enabled ? subscribeToNode(uuid, cb) : noopUnsubscribe),
+    [uuid, enabled],
   );
+  const getSnapshotFn = useCallback(
+    () => (enabled ? getNodeSnapshot(uuid) : undefined),
+    [uuid, enabled],
+  );
+  return useSyncExternalStore(subscribeFn, getSnapshotFn, getSnapshotFn);
 }
 
 export function useNodeTrafficTrend(
@@ -35,11 +43,15 @@ export function useNodeTrafficTrend(
   enabled = true,
 ): { up: TrafficTrendSample[]; down: TrafficTrendSample[] } {
   useEnsured(enabled);
-  return useSyncExternalStore(
-    enabled ? (cb) => subscribeToNode(uuid, cb) : () => () => undefined,
-    enabled ? () => getNodeTrafficTrendSnapshot(uuid) : () => EMPTY_TRAFFIC_TREND_SNAPSHOT,
-    enabled ? () => getNodeTrafficTrendSnapshot(uuid) : () => EMPTY_TRAFFIC_TREND_SNAPSHOT,
+  const subscribeFn = useCallback(
+    (cb: () => void) => (enabled ? subscribeToNode(uuid, cb) : noopUnsubscribe),
+    [uuid, enabled],
   );
+  const getSnapshotFn = useCallback(
+    () => (enabled ? getNodeTrafficTrendSnapshot(uuid) : EMPTY_TRAFFIC_TREND_SNAPSHOT),
+    [uuid, enabled],
+  );
+  return useSyncExternalStore(subscribeFn, getSnapshotFn, getSnapshotFn);
 }
 
 export function useVisibleNodeUuids(): string[] {
