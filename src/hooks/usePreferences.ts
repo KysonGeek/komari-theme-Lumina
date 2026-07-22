@@ -19,7 +19,6 @@ const DEFAULTS: PrefsState = {
 
 let themeFlipTimer: number | null = null;
 let hasExplicitAppearancePreference = false;
-let defaultAppearanceSyncPromise: Promise<void> | null = null;
 let systemAppearanceMediaQuery: MediaQueryList | null = null;
 
 function isAppearance(value: unknown): value is Appearance {
@@ -122,45 +121,6 @@ function commit(next: Partial<PrefsState>) {
   emit();
 }
 
-function syncDefaultAppearanceFromPublicConfig() {
-  if (hasExplicitAppearancePreference || defaultAppearanceSyncPromise) {
-    return defaultAppearanceSyncPromise;
-  }
-
-  defaultAppearanceSyncPromise = fetch("/api/public", {
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (resp) => {
-      if (!resp.ok) {
-        throw new Error(`Request /api/public failed: ${resp.status}`);
-      }
-      return (await resp.json()) as {
-        data?: {
-          theme_settings?: {
-            defaultAppearance?: unknown;
-          };
-        };
-      };
-    })
-    .then((payload) => {
-      if (hasExplicitAppearancePreference) return;
-      const appearance = normalizeAppearance(
-        payload?.data?.theme_settings?.defaultAppearance,
-      );
-      persistDefaultAppearance(appearance);
-      commit({ appearance });
-    })
-    .catch(() => {
-      // Keep the local fallback when public config is temporarily unavailable.
-    })
-    .finally(() => {
-      defaultAppearanceSyncPromise = null;
-    });
-
-  return defaultAppearanceSyncPromise;
-}
-
 let initialized = false;
 function initIfNeeded() {
   if (initialized) return;
@@ -171,9 +131,6 @@ function initIfNeeded() {
     persistAppearance(stored.appearance);
   }
   commit({ appearance: stored.appearance });
-  if (!stored.hasExplicitPreference) {
-    void syncDefaultAppearanceFromPublicConfig();
-  }
   const refreshSystemAppearance = () => {
     if (snapshot.appearance === "system") {
       commit({ appearance: "system" });
@@ -207,13 +164,15 @@ export function usePreferences() {
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const { data: config } = usePublicConfig();
 
+  // 管理端默认外观通过 react-query 的 ["public"] 缓存下发；未手动选择外观的用户跟随该值。
+  // （历史上这里还有一条独立的裸 fetch /api/public，与本缓存重复，已移除。）
   useEffect(() => {
     if (!config) return;
     if (hasExplicitAppearancePreference) return;
     const defaultAppearance = normalizeAppearance(config.theme_settings?.defaultAppearance);
     persistDefaultAppearance(defaultAppearance);
     commit({ appearance: defaultAppearance });
-  }, [config?.theme_settings?.defaultAppearance]);
+  }, [config]);
 
   const setAppearance = useCallback((a: Appearance) => {
     hasExplicitAppearancePreference = true;

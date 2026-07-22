@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useVisibleNodeUuids } from "@/hooks/useNode";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { getPingOverview } from "@/services/api";
@@ -417,6 +417,19 @@ async function refreshPingOverview() {
   }
 }
 
+function stopPingOverview() {
+  // 首页卸载后停止链式轮询，避免后台空转请求；不清空已缓存数据，
+  // 返回首页时 ensurePingOverviewStarted 会因 key 变化自动触发刷新。
+  if (pingRefreshTimer != null) {
+    window.clearTimeout(pingRefreshTimer);
+    pingRefreshTimer = null;
+  }
+  scheduledVisibleUuids = [];
+  scheduledVisibleKey = "";
+  scheduledBindings = {};
+  scheduledBindingsKey = stringifyBindings({});
+}
+
 function ensurePingOverviewStarted(
   visibleUuids: string[],
   bindings: HomepagePingTaskBindings,
@@ -483,14 +496,24 @@ export function useHomepagePingOverview() {
   useEffect(() => {
     ensurePingOverviewStarted(visibleUuids, bindings);
   }, [bindings, visibleUuids]);
+
+  // 离开首页（仅 NodeGrid 使用本 hook）即停止后台轮询。
+  useEffect(() => stopPingOverview, []);
 }
 
+const noopUnsubscribe = () => undefined;
+
 export function usePingMini(uuid: string): PingOverviewItem {
-  return useSyncExternalStore(
-    uuid ? (cb) => subscribeToPingItem(uuid, cb) : () => () => undefined,
-    uuid ? () => getPingSnapshot(uuid) : () => EMPTY_PING,
-    uuid ? () => getPingSnapshot(uuid) : () => EMPTY_PING,
+  // subscribe 身份必须稳定，否则 useSyncExternalStore 每次 render 都会重订阅。
+  const subscribeFn = useCallback(
+    (cb: () => void) => (uuid ? subscribeToPingItem(uuid, cb) : noopUnsubscribe),
+    [uuid],
   );
+  const getSnapshotFn = useCallback(
+    () => (uuid ? getPingSnapshot(uuid) : EMPTY_PING),
+    [uuid],
+  );
+  return useSyncExternalStore(subscribeFn, getSnapshotFn, getSnapshotFn);
 }
 
 export function usePingMiniBuckets(

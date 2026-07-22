@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useCallback, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Cpu,
@@ -476,38 +476,44 @@ function TrafficDotStrip({
   color: string;
   redrawKey: string;
 }) {
+  // useCallback 固定 draw 身份，避免卡片上无关状态（如 ping hover）变化时重绘画布。
+  const draw = useCallback(
+    (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+      if (samples.length === 0) return;
+      const slotWidth = width / samples.length;
+      const styles = getComputedStyle(document.documentElement);
+      const baseColor = resolveCssColor(color, styles);
+      const inactiveColor = resolveCssColor("var(--progress-bg)", styles);
+
+      samples.forEach((sample, index) => {
+        const hasTraffic = sample.value > 0;
+        const scale = hasTraffic ? 0.72 + sample.level * 0.82 : 0.46;
+        const radius = 2 * scale;
+        const tone = hasTraffic
+          ? `color-mix(in srgb, ${baseColor} ${Math.round(68 + sample.level * 20)}%, white ${Math.round(32 - sample.level * 20)}%)`
+          : inactiveColor;
+        const x = index * slotWidth + slotWidth / 2;
+        const y = height / 2;
+
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = tone;
+        ctx.globalAlpha = hasTraffic ? Math.min(1, sample.opacity + 0.05) : 0.46;
+        ctx.fill();
+      });
+
+      ctx.globalAlpha = 1;
+    },
+    [color, samples],
+  );
+
   return (
     <CanvasStrip
       className="traffic-dot-strip"
       height={10}
       ariaHidden
       redrawKey={redrawKey}
-      draw={(ctx, width, height) => {
-        if (samples.length === 0) return;
-        const slotWidth = width / samples.length;
-        const styles = getComputedStyle(document.documentElement);
-        const baseColor = resolveCssColor(color, styles);
-        const inactiveColor = resolveCssColor("var(--progress-bg)", styles);
-
-        samples.forEach((sample, index) => {
-          const hasTraffic = sample.value > 0;
-          const scale = hasTraffic ? 0.72 + sample.level * 0.82 : 0.46;
-          const radius = 2 * scale;
-          const tone = hasTraffic
-            ? `color-mix(in srgb, ${baseColor} ${Math.round(68 + sample.level * 20)}%, white ${Math.round(32 - sample.level * 20)}%)`
-            : inactiveColor;
-          const x = index * slotWidth + slotWidth / 2;
-          const y = height / 2;
-
-          ctx.beginPath();
-          ctx.arc(x, y, radius, 0, Math.PI * 2);
-          ctx.fillStyle = tone;
-          ctx.globalAlpha = hasTraffic ? Math.min(1, sample.opacity + 0.05) : 0.46;
-          ctx.fill();
-        });
-
-        ctx.globalAlpha = 1;
-      }}
+      draw={draw}
     />
   );
 }

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { CanvasStrip, fillRoundedRect, resolveCssColor } from "./CanvasStrip";
 
 const METRIC_SEGMENT_COUNT = 18;
@@ -37,6 +37,52 @@ export function MetricBar({
 }: MetricBarProps) {
   const clamped = Math.max(0, Math.min(1, fraction));
   const activeSegments = clamped * METRIC_SEGMENT_COUNT;
+  // paint 由调用方以内联对象传入，身份不稳定；拆成原始字段参与依赖，
+  // 保证 draw 闭包仅在真实数据变化时重建，hover 等无关 render 不再触发重绘。
+  const paintKind = paint.kind;
+  const paintColor = paint.kind === "solid" ? paint.color : "";
+  const paintFrom = paint.kind === "gradient" ? paint.from : "";
+  const paintTo = paint.kind === "gradient" ? paint.to : "";
+
+  const draw = useCallback(
+    (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+      const styles = getComputedStyle(document.documentElement);
+      const inactiveColor = resolveCssColor("var(--progress-bg)", styles);
+      const gap = 2;
+      const segmentWidth = Math.max(
+        1,
+        (width - gap * (METRIC_SEGMENT_COUNT - 1)) / METRIC_SEGMENT_COUNT,
+      );
+      const activePaint =
+        paintKind === "gradient"
+          ? (() => {
+              const gradient = ctx.createLinearGradient(0, 0, width, 0);
+              gradient.addColorStop(0, resolveCssColor(paintFrom, styles));
+              gradient.addColorStop(1, resolveCssColor(paintTo, styles));
+              return gradient;
+            })()
+          : resolveCssColor(paintColor, styles);
+
+      for (let index = 0; index < METRIC_SEGMENT_COUNT; index += 1) {
+        const x = index * (segmentWidth + gap);
+        const fillLevel = Math.max(0, Math.min(1, activeSegments - index));
+        const isActive = fillLevel > 0;
+
+        ctx.globalAlpha = 0.58;
+        ctx.fillStyle = inactiveColor;
+        fillRoundedRect(ctx, x, 0, segmentWidth, height, 2);
+
+        if (isActive) {
+          ctx.globalAlpha = 0.42 + fillLevel * 0.56;
+          ctx.fillStyle = activePaint;
+          fillRoundedRect(ctx, x, 0, segmentWidth, height, 2);
+        }
+      }
+
+      ctx.globalAlpha = 1;
+    },
+    [activeSegments, paintColor, paintFrom, paintKind, paintTo],
+  );
 
   return (
     <div className="metric-item">
@@ -65,42 +111,7 @@ export function MetricBar({
           height={10}
           ariaHidden
           redrawKey={redrawKey}
-          draw={(ctx, width, height) => {
-            const styles = getComputedStyle(document.documentElement);
-            const inactiveColor = resolveCssColor("var(--progress-bg)", styles);
-            const gap = 2;
-            const segmentWidth = Math.max(
-              1,
-              (width - gap * (METRIC_SEGMENT_COUNT - 1)) / METRIC_SEGMENT_COUNT,
-            );
-            const activePaint =
-              paint.kind === "gradient"
-                ? (() => {
-                    const gradient = ctx.createLinearGradient(0, 0, width, 0);
-                    gradient.addColorStop(0, resolveCssColor(paint.from, styles));
-                    gradient.addColorStop(1, resolveCssColor(paint.to, styles));
-                    return gradient;
-                  })()
-                : resolveCssColor(paint.color, styles);
-
-            for (let index = 0; index < METRIC_SEGMENT_COUNT; index += 1) {
-              const x = index * (segmentWidth + gap);
-              const fillLevel = Math.max(0, Math.min(1, activeSegments - index));
-              const isActive = fillLevel > 0;
-
-              ctx.globalAlpha = 0.58;
-              ctx.fillStyle = inactiveColor;
-              fillRoundedRect(ctx, x, 0, segmentWidth, height, 2);
-
-              if (isActive) {
-                ctx.globalAlpha = 0.42 + fillLevel * 0.56;
-                ctx.fillStyle = activePaint;
-                fillRoundedRect(ctx, x, 0, segmentWidth, height, 2);
-              }
-            }
-
-            ctx.globalAlpha = 1;
-          }}
+          draw={draw}
         />
       </div>
     </div>

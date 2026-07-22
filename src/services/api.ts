@@ -157,10 +157,6 @@ function finiteMetricValue(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function metricPointTime(value: string | number) {
-  return value;
-}
-
 function getTaskIdFromTags(...items: Array<Record<string, string> | undefined>) {
   for (const tags of items) {
     const raw = tags?.task_id;
@@ -216,7 +212,7 @@ function pingRecordsFromMetricSeries(series: PublicMetricSeries[]) {
       const taskId = getTaskIdFromTags(tags);
       if (taskId == null) continue;
 
-      const time = metricPointTime(point.time);
+      const time = point.time;
       const key = `${item.entity_id}\u0000${taskId}\u0000${String(time)}`;
       const entry = entries.get(key) ?? {
         client: item.entity_id,
