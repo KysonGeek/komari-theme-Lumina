@@ -51,6 +51,17 @@ export function buildLoadTimeRangeOptions(maxHours: number | null | undefined) {
   return buildHistoryRangeOptions(LOAD_TIME_RANGE_OPTIONS, maxHours, true);
 }
 
+// Ping 无实时推送数据源，且档位上限固定 30 天（不提供 90 天）
+const PING_TIME_RANGE_MAX_HOURS = 720;
+
+export function buildPingTimeRangeOptions(maxHours: number | null | undefined) {
+  const cappedMaxHours =
+    Number.isFinite(maxHours) && maxHours && maxHours > 0
+      ? Math.min(Math.floor(maxHours), PING_TIME_RANGE_MAX_HOURS)
+      : PING_TIME_RANGE_MAX_HOURS;
+  return buildHistoryRangeOptions(LOAD_TIME_RANGE_OPTIONS, cappedMaxHours, false);
+}
+
 const GRID_CHART_DEFAULT = { w: 420, h: 150 };
 const GRID_CHART_DESKTOP_MAX_WIDTH = 480;
 const GRID_CHART_TABLET_MAX_WIDTH = 560;
@@ -71,16 +82,6 @@ export function toChartSeconds(value: string | number): number {
   }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed / 1000;
-}
-
-export function formatHourMinuteAxis(_self: uPlot, splits: number[]): string[] {
-  return splits.map((value) => {
-    const date = new Date(value * 1000);
-    return `${date.getHours().toString().padStart(2, "0")}:${date
-      .getMinutes()
-      .toString()
-      .padStart(2, "0")}`;
-  });
 }
 
 function pad2(value: number) {

@@ -6,11 +6,12 @@ import { PingChart } from "@/components/instance/PingChart";
 import { LoadChart } from "@/components/instance/LoadChart";
 import {
   buildLoadTimeRangeOptions,
+  buildPingTimeRangeOptions,
 } from "@/components/instance/chartShared";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import type { PublicConfig } from "@/types/komari";
 
-const FIXED_PING_HOURS = 24;
+const DEFAULT_PING_HOURS = 24;
 
 function getMetricRetentionHours(config: PublicConfig | undefined) {
   const legacyHours = config?.record_preserve_time ?? 0;
@@ -19,15 +20,24 @@ function getMetricRetentionHours(config: PublicConfig | undefined) {
   return metricRetentionDays > 0 ? metricRetentionDays * 24 : 0;
 }
 
+function getPingRetentionHours(config: PublicConfig | undefined) {
+  return config?.ping_record_preserve_time ?? 0;
+}
+
 export function Instance() {
   const { uuid } = useParams<{ uuid: string }>();
   const { data: config } = usePublicConfig();
   const [chartType, setChartType] = useState<"load" | "ping">("load");
   const [loadHours, setLoadHours] = useState(0);
+  const [pingHours, setPingHours] = useState(DEFAULT_PING_HOURS);
   const chartControlsRef = useRef<HTMLDivElement | null>(null);
 
   const loadRanges = useMemo(
     () => buildLoadTimeRangeOptions(getMetricRetentionHours(config)),
+    [config],
+  );
+  const pingRanges = useMemo(
+    () => buildPingTimeRangeOptions(getPingRetentionHours(config)),
     [config],
   );
   const showPingChart = config?.theme_settings?.showPingChart !== false;
@@ -51,6 +61,12 @@ export function Instance() {
       setLoadHours(loadRanges[0]?.value ?? 0);
     }
   }, [loadHours, loadRanges]);
+
+  useEffect(() => {
+    if (!pingRanges.some((range) => range.value === pingHours)) {
+      setPingHours(pingRanges[pingRanges.length - 1]?.value ?? DEFAULT_PING_HOURS);
+    }
+  }, [pingHours, pingRanges]);
 
   useEffect(() => {
     if (!showPingChart && chartType === "ping") {
@@ -93,27 +109,29 @@ export function Instance() {
             </button>
           )}
         </div>
-        {chartType === "load" && (
-          <div
-            key={`${chartType}-ranges`}
-            className="instance-segmented is-scrollable"
-          >
-            {loadRanges.map((range) => (
+        <div
+          key={`${chartType}-ranges`}
+          className="instance-segmented is-scrollable"
+        >
+          {(chartType === "load" ? loadRanges : pingRanges).map((range) => {
+            const activeHours = chartType === "load" ? loadHours : pingHours;
+            const setHours = chartType === "load" ? setLoadHours : setPingHours;
+            return (
               <button
                 key={range.value}
                 type="button"
-                data-active={loadHours === range.value ? "true" : "false"}
+                data-active={activeHours === range.value ? "true" : "false"}
                 onClick={() => {
                   startTransition(() => {
-                    setLoadHours(range.value);
+                    setHours(range.value);
                   });
                 }}
               >
                 {range.label}
               </button>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
       <div className="instance-chart-stage">
         <div
@@ -131,7 +149,7 @@ export function Instance() {
           {showPingChart ? (
             <PingChart
               uuid={uuid}
-              hours={FIXED_PING_HOURS}
+              hours={pingHours}
               active={chartType === "ping"}
             />
           ) : null}

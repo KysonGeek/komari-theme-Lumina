@@ -6,7 +6,7 @@ import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { usePingRecords } from "@/hooks/useRecords";
 import { InstancePanel } from "./InstancePanel";
 import {
-  formatHourMinuteAxis,
+  createTimeAxisFormatter,
   formatTooltipTime,
   getChartTooltipPosition,
   toChartSeconds,
@@ -241,8 +241,8 @@ export function PingChart({
           stroke: text,
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid },
-          size: 36,
-          values: formatHourMinuteAxis,
+          size: hours >= 72 ? 38 : 36,
+          values: createTimeAxisFormatter(hours),
         },
         {
           stroke: text,
